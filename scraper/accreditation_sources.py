@@ -2,6 +2,8 @@
 
 Only exact identities from an accreditor's own directory become evidence. Directory
 outages and pages without published results never produce an accreditation claim.
+When an issuer directory is unavailable, an already exact-matched SAPTO/BAN-PT
+record may be retained as national-registry evidence without guessing the issuer.
 """
 
 from __future__ import annotations
@@ -133,13 +135,13 @@ def _read(url: str) -> str | None:
 def _selected_lams(prodi: dict[str, Any]) -> list[str]:
     name = _norm(prodi.get("nama"))
     patterns = {
-        "LAMEMBA": r"\b(ekonomi|manajemen|bisnis|akuntansi|keuangan|perpajakan)\b",
+        "LAMEMBA": r"\b(ekonomi|manajemen|bisnis|akuntansi|keuangan|perpajakan|perbankan|kewirausahaan)\b",
         "LAM-PTKes": r"\b(kesehatan|kedokteran|keperawatan|kebidanan|farmasi|gizi|fisioterapi|radiologi|epidemiologi|biomedis|kedokteran gigi|anestesi)\b",
         "LAMDIK": r"\b(pendidikan|tadris|keguruan|pedagogi)\b",
         "LAM Teknik": r"\b(teknik|rekayasa|teknologi industri|arsitektur|konstruksi)\b",
         "LAM Infokom": r"\b(informatika|komputer|sistem informasi|teknologi informasi|sains data|kecerdasan buatan)\b",
         "LAMSAMA": r"\b(matematika|fisika|kimia|biologi|statistika|sains alam|aktuaria)\b",
-        "LAMSPAK": r"\b(sosial|politik|administrasi|komunikasi|hubungan internasional|kriminologi|kesejahteraan sosial)\b",
+        "LAMSPAK": r"\b(sosial|politik|administrasi|komunikasi|hubungan internasional|hubungan masyarakat|humas|public relations|kriminologi|kesejahteraan sosial|pekerjaan sosial|antropologi|jurnalistik|penyiaran|periklanan|penerbitan dan media|perpustakaan|kearsipan|pemerintahan|kebijakan publik|sosiologi|kependudukan|pembangunan wilayah|komunikasi massa|manajemen komunikasi|kajian film|televisi dan film)\b",
     }
     return [source for source, pattern in patterns.items() if re.search(pattern, name)]
 
@@ -211,6 +213,16 @@ def _published_decisions(page: str, url: str) -> list[dict[str, str]]:
     return decisions
 
 
+def _directory_unavailable_status(source: str, page: str) -> str:
+    """Classify official pages that explicitly do not expose a usable public directory."""
+    text = _norm(page)
+    if source == "LAMEMBA" and "data akreditasi mapping" in text:
+        return "halaman hasil tersedia; direktori data tidak dapat diakses publik"
+    if source == "LAMSPAK" and "data akreditasi tidak tersedia" in text:
+        return "data akreditasi belum tersedia"
+    return ""
+
+
 def _identity_matches(decision: dict[str, str], prodi: dict[str, Any]) -> bool:
     pt = _norm(prodi.get("pt"))
     published_pt = _norm(decision["pt"])
@@ -269,8 +281,47 @@ def _fetch_lamsama(prodi: dict[str, Any]) -> list[dict[str, str]]:
         return result
 
 
+def _national_registry_fallback(
+    prodi: dict[str, Any], selected: list[str], checked: list[dict[str, str]],
+) -> dict[str, Any] | None:
+    """Reuse exact SAPTO/BAN-PT evidence when a LAM directory cannot expose the row.
+
+    ``enrich_banpt`` runs before this function in the production pipeline and only
+    marks a program ``terverifikasi`` after an exact PT/program/code match. This
+    fallback deliberately does not assign ``lembaga_akreditasi_nasional`` from the
+    scope regex: some program names can belong to overlapping LAM scopes and older
+    decisions can still have been issued by BAN-PT.
+    """
+    if not selected or _norm(prodi.get("status_pencocokan_akreditasi")) != "terverifikasi":
+        return None
+    source = str(prodi.get("sumber_akreditasi", "")).strip()
+    if source != "SAPTO BAN-PT":
+        return None
+    rank = str(prodi.get("peringkat_akreditasi_banpt") or prodi.get("peringkat_akreditasi_nasional") or "").strip()
+    sk = str(prodi.get("nomor_sk_akreditasi") or "").strip()
+    sk_date = str(prodi.get("tanggal_sk_akreditasi") or "").strip()
+    expiry = str(prodi.get("tanggal_akhir_akreditasi") or "").strip()
+    if not any((rank, sk, sk_date, expiry)):
+        return None
+    return {
+        "pemeriksaan_lam": checked,
+        "status_pencocokan_lam": "terverifikasi melalui register nasional",
+        "cakupan_lam_terpilih": selected,
+        "peringkat_akreditasi_nasional": rank,
+        "nomor_sk_akreditasi": sk,
+        "tanggal_sk_akreditasi": sk_date,
+        "tanggal_akhir_akreditasi": expiry,
+        "status_berlaku_sk_akreditasi": str(prodi.get("status_berlaku_sk_akreditasi") or "").strip(),
+        "sumber_akreditasi": source,
+        "url_sumber_akreditasi": str(prodi.get("url_sumber_akreditasi") or "").strip(),
+        "url_riwayat_akreditasi": str(prodi.get("url_riwayat_akreditasi") or "").strip(),
+        "url_sk_akreditasi": str(prodi.get("url_sk_akreditasi") or "").strip(),
+        "akreditasi_diperiksa_pada": str(prodi.get("akreditasi_diperiksa_pada") or datetime.now(timezone.utc).isoformat()),
+    }
+
+
 def enrich_national(prodi: dict[str, Any]) -> dict[str, Any]:
-    """Look up only LAMs relevant to the program; never infer a decision from scope."""
+    """Look up relevant LAMs and retain exact national-registry evidence as fallback."""
     selected = _selected_lams(prodi)
     checked: list[dict[str, str]] = []
     matches: list[tuple[str, dict[str, str]]] = []
@@ -287,6 +338,10 @@ def enrich_national(prodi: dict[str, Any]) -> dict[str, Any]:
         if page is None:
             checked.append({"lembaga": source, "status": "sumber tidak tersedia", "url": url})
             continue
+        unavailable_status = _directory_unavailable_status(source, page)
+        if unavailable_status:
+            checked.append({"lembaga": source, "status": unavailable_status, "url": url})
+            continue
         decisions = _published_decisions(page, url)
         checked.append({"lembaga": source, "status": "direktori tersedia" if decisions else "keputusan publik belum tersedia", "url": url})
         matches.extend((source, row) for row in decisions if _identity_matches(row, prodi))
@@ -294,7 +349,20 @@ def enrich_national(prodi: dict[str, Any]) -> dict[str, Any]:
     if len({source for source, _ in matches}) > 1:
         return {"pemeriksaan_lam": checked, "status_pencocokan_lam": "beberapa LAM cocok; perlu pemeriksaan"}
     if not matches:
-        return {"pemeriksaan_lam": checked, "status_pencocokan_lam": "keputusan tidak ditemukan" if selected else "di luar cakupan LAM terpilih"}
+        registry_result = _national_registry_fallback(prodi, selected, checked)
+        if registry_result:
+            return registry_result
+        unverifiable = {
+            "sumber tidak tersedia",
+            "keputusan publik belum tersedia",
+            "halaman hasil tersedia; direktori data tidak dapat diakses publik",
+            "data akreditasi belum tersedia",
+        }
+        if selected and checked and all(item["status"] in unverifiable for item in checked):
+            match_status = "tidak dapat diverifikasi dari sumber publik"
+        else:
+            match_status = "keputusan tidak ditemukan" if selected else "di luar cakupan LAM terpilih"
+        return {"pemeriksaan_lam": checked, "status_pencocokan_lam": match_status}
     source, decision = max(matches, key=lambda item: (item[1]["tanggal_sk"], item[1]["berlaku_sampai"]))
     expiry = decision["berlaku_sampai"]
     status = "Tidak berlaku" if expiry and expiry < date.today().isoformat() else "Berlaku" if expiry else "Belum diketahui"
@@ -364,7 +432,7 @@ def _abet_program(prodi: dict[str, Any]) -> dict[str, str] | None:
     # Request a single Indonesian institution to keep any program claim scoped.
     query = urlencode({"countries": "ID", "exactMatch": "true",
                        "keyword": str(prodi.get("pt", "")), "searchType": "institution"})
-    url = f"https://amspub.abet.org/aps/name-search?{query}"
+    url = f"{INTERNATIONAL_DIRECTORIES['ABET'].rstrip('/')}/name-search?{query}"
     page = _read(url)
     if not page:
         return None

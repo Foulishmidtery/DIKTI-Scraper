@@ -211,6 +211,16 @@ def _published_decisions(page: str, url: str) -> list[dict[str, str]]:
     return decisions
 
 
+def _directory_unavailable_status(source: str, page: str) -> str:
+    """Classify official pages that explicitly do not expose a usable public directory."""
+    text = _norm(page)
+    if source == "LAMEMBA" and "data akreditasi mapping" in text:
+        return "halaman hasil tersedia; direktori data tidak dapat diakses publik"
+    if source == "LAMSPAK" and "data akreditasi tidak tersedia" in text:
+        return "data akreditasi belum tersedia"
+    return ""
+
+
 def _identity_matches(decision: dict[str, str], prodi: dict[str, Any]) -> bool:
     pt = _norm(prodi.get("pt"))
     published_pt = _norm(decision["pt"])
@@ -287,6 +297,10 @@ def enrich_national(prodi: dict[str, Any]) -> dict[str, Any]:
         if page is None:
             checked.append({"lembaga": source, "status": "sumber tidak tersedia", "url": url})
             continue
+        unavailable_status = _directory_unavailable_status(source, page)
+        if unavailable_status:
+            checked.append({"lembaga": source, "status": unavailable_status, "url": url})
+            continue
         decisions = _published_decisions(page, url)
         checked.append({"lembaga": source, "status": "direktori tersedia" if decisions else "keputusan publik belum tersedia", "url": url})
         matches.extend((source, row) for row in decisions if _identity_matches(row, prodi))
@@ -294,7 +308,17 @@ def enrich_national(prodi: dict[str, Any]) -> dict[str, Any]:
     if len({source for source, _ in matches}) > 1:
         return {"pemeriksaan_lam": checked, "status_pencocokan_lam": "beberapa LAM cocok; perlu pemeriksaan"}
     if not matches:
-        return {"pemeriksaan_lam": checked, "status_pencocokan_lam": "keputusan tidak ditemukan" if selected else "di luar cakupan LAM terpilih"}
+        unverifiable = {
+            "sumber tidak tersedia",
+            "keputusan publik belum tersedia",
+            "halaman hasil tersedia; direktori data tidak dapat diakses publik",
+            "data akreditasi belum tersedia",
+        }
+        if selected and checked and all(item["status"] in unverifiable for item in checked):
+            match_status = "tidak dapat diverifikasi dari sumber publik"
+        else:
+            match_status = "keputusan tidak ditemukan" if selected else "di luar cakupan LAM terpilih"
+        return {"pemeriksaan_lam": checked, "status_pencocokan_lam": match_status}
     source, decision = max(matches, key=lambda item: (item[1]["tanggal_sk"], item[1]["berlaku_sampai"]))
     expiry = decision["berlaku_sampai"]
     status = "Tidak berlaku" if expiry and expiry < date.today().isoformat() else "Berlaku" if expiry else "Belum diketahui"

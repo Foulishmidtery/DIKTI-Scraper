@@ -15,3 +15,23 @@ jobs:
           python-version: '3.12'
       - name: Run accreditation unit tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Install live-smoke dependency
+        run: python -m pip install --disable-pip-version-check requests
+      - name: Live SAPTO and Bianglala smoke test
+        run: |
+          python - <<'PY'
+          from scraper.prodi_enrichment import enrich_banpt
+
+          result = enrich_banpt({
+              "pt": "Universitas Indonesia",
+              "nama": "Akuntansi",
+              "jenjang": "S1",
+              "kode_pt": "",
+              "kode_prodi": "",
+          })
+          print(result)
+          assert result["status_pencocokan_akreditasi"] == "terverifikasi", result
+          assert result["peringkat_akreditasi_banpt"], result
+          assert result["tanggal_akhir_akreditasi"], result
+          assert result["url_sumber_akreditasi"], result
+          PY

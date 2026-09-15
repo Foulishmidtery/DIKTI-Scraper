@@ -21,17 +21,24 @@ class AccreditationSourceTests(unittest.TestCase):
     def setUp(self):
         self.prodi = {"pt": "Universitas Indonesia", "nama": "Akuntansi", "jenjang": "S1",
                       "kode_pt": "001002", "kode_prodi": "62201"}
+        sources._lamemba_cache = None
 
-    def test_lamemba_exact_decision_fills_sk(self):
-        page = """<table><tr><th>Nama Perguruan_Tinggi</th><th>Nama Program_Studi</th>
-        <th>Jenjang</th><th>No SK</th><th>Peringkat</th><th>Tanggal SK</th>
-        <th>Tanggal Kadaluarsa</th></tr><tr><td>Universitas Indonesia</td>
-        <td>Akuntansi</td><td>S1</td><td>123/SK/LAMEMBA/2026</td><td>Unggul</td>
-        <td>2026-02-01</td><td>2031-02-01</td></tr></table>"""
-        with patch.object(sources, "_read", return_value=page):
+    def test_lamemba_exact_decision_uses_public_table_without_document_download(self):
+        rows = [{"value": {"perguruan_tinggi": "Universitas Indonesia", "jenjang": "Akuntansi",
+                             "program_studi": "Sarjana", "download": '<a href="https://drive.google.com/file/d/example/view">Download</a>'}}]
+        class Response:
+            headers = {"content-disposition": 'attachment; filename="123 SK Terakreditasi Universitas Indonesia.pdf"'}
+            def raise_for_status(self): pass
+            def json(self): return rows
+        original_requests = sources.requests
+        sources.requests = types.SimpleNamespace(RequestException=Exception, get=lambda *args, **kwargs: Response())
+        try:
             found = sources.enrich_national(self.prodi)
+        finally:
+            sources.requests = original_requests
         self.assertEqual(found["lembaga_akreditasi_nasional"], "LAMEMBA")
-        self.assertEqual(found["nomor_sk_akreditasi"], "123/SK/LAMEMBA/2026")
+        self.assertEqual(found["peringkat_akreditasi_nasional"], "Terakreditasi Sementara")
+        self.assertEqual(found["url_sk_akreditasi"], "https://drive.google.com/file/d/example/view")
 
     def test_similar_school_and_wrong_level_rejected(self):
         page = """<table><tr><th>Nama PT</th><th>Nama PS</th><th>Jenjang</th>
@@ -47,7 +54,7 @@ class AccreditationSourceTests(unittest.TestCase):
         with patch.object(sources, "_read", return_value=None):
             found = sources.enrich_national(self.prodi)
         self.assertNotIn("nomor_sk_akreditasi", found)
-        self.assertEqual(found["pemeriksaan_lam"][0]["status"], "sumber tidak tersedia")
+        self.assertEqual(found["pemeriksaan_lam"][0]["status"], "sumber SK publik tidak tersedia")
 
     def test_international_school_does_not_claim_program_scope(self):
         page = '<a href="/schools/ui">Universitas Indonesia</a>'

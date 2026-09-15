@@ -39,6 +39,16 @@ _cache: dict[str, tuple[float, str | None]] = {}
 _lock = threading.Lock()
 _read_locks: dict[str, threading.Lock] = {}
 _lamsama_cache: dict[str, tuple[float, list[dict[str, str]]]] = {}
+_lamemba_cache: tuple[float, list[dict[str, str]]] | None = None
+
+# The old "hasil_akreditasi" link on LAMEMBA's menu is currently a 404 page.
+# These are the live public Ninja Tables linked from its official SK pages.
+_LAMEMBA_TABLES = (
+    ("49554", "Terakreditasi Sementara"),
+    ("50641", "Terakreditasi"),
+    ("50711", "Terakreditasi Sementara"),
+)
+_LAMEMBA_AJAX = "https://lamemba.or.id/wp-admin/admin-ajax.php"
 
 
 def _norm(value: Any) -> str:
@@ -269,6 +279,52 @@ def _fetch_lamsama(prodi: dict[str, Any]) -> list[dict[str, str]]:
         return result
 
 
+def _fetch_lamemba() -> list[dict[str, str]]:
+    """Read the current public LAMEMBA SK tables, not the retired menu URL."""
+    global _lamemba_cache
+    with _lock:
+        if _lamemba_cache and time.time() - _lamemba_cache[0] < CACHE_TTL:
+            return _lamemba_cache[1]
+        request_lock = _read_locks.setdefault("lamemba:published-sk", threading.Lock())
+    with request_lock:
+        with _lock:
+            if _lamemba_cache and time.time() - _lamemba_cache[0] < CACHE_TTL:
+                return _lamemba_cache[1]
+        decisions: list[dict[str, str]] = []
+        for table_id, status in _LAMEMBA_TABLES:
+            try:
+                response = requests.get(
+                    _LAMEMBA_AJAX,
+                    params={"action": "wp_ajax_ninja_tables_public_action", "table_id": table_id,
+                            "target_action": "get-all-data", "default_sorting": "old_first",
+                            "skip_rows": "0", "limit_rows": "0", "ninja_table_public_nonce": "8eb4af1772"},
+                    headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=TIMEOUT,
+                )
+                response.raise_for_status()
+                rows = response.json()
+            except (requests.RequestException, ValueError, AttributeError):
+                continue
+            for row in rows if isinstance(rows, list) else []:
+                value = row.get("value", {}) if isinstance(row, dict) else {}
+                if not isinstance(value, dict):
+                    continue
+                document = str(value.get("download", ""))
+                link = re.search(r'''href=["']([^"']+)''', document, flags=re.IGNORECASE)
+                decisions.append({
+                    "pt": str(value.get("perguruan_tinggi", "")),
+                    # LAMEMBA's table keys are historically reversed: jenjang is the program name.
+                    "prodi": str(value.get("jenjang", "")),
+                    "jenjang": str(value.get("program_studi", "")),
+                    "kode_pt": "", "kode_prodi": "", "sk": "",
+                    "peringkat": status, "tanggal_sk": "", "berlaku_sampai": "",
+                    "status": status,
+                    "url": html.unescape(link.group(1)) if link else LAM_DIRECTORIES["LAMEMBA"],
+                })
+        with _lock:
+            _lamemba_cache = (time.time(), decisions)
+        return decisions
+
+
 def enrich_national(prodi: dict[str, Any]) -> dict[str, Any]:
     """Look up only LAMs relevant to the program; never infer a decision from scope."""
     selected = _selected_lams(prodi)
@@ -281,6 +337,13 @@ def enrich_national(prodi: dict[str, Any]) -> dict[str, Any]:
         if source == "LAMSAMA":
             decisions = _fetch_lamsama(prodi)
             checked.append({"lembaga": source, "status": "direktori tersedia" if decisions else "keputusan tidak ditemukan", "url": url})
+            matches.extend((source, row) for row in decisions if _identity_matches(row, prodi))
+            continue
+        if source == "LAMEMBA":
+            decisions = _fetch_lamemba()
+            checked.append({"lembaga": source,
+                            "status": "direktori SK publik tersedia" if decisions else "sumber SK publik tidak tersedia",
+                            "url": url})
             matches.extend((source, row) for row in decisions if _identity_matches(row, prodi))
             continue
         page = _read(url)

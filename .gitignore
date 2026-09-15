@@ -1,0 +1,49 @@
+# =========================
+# Frontend
+# =========================
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# =========================
+# Backend / Build
+# =========================
+backend-dist/
+build/
+build-tools/
+.npm-cache/
+
+# =========================
+# Electron output
+# =========================
+release/
+release-test/
+electron42-raw-test/
+portable-inspect/
+
+# Generic Electron build artifacts
+**/win-unpacked/
+**/win-unpacked.tmp/
+*.exe
+*.asar
+
+# =========================
+# Runtime generated files
+# =========================
+storage/
+output/
+
+# =========================
+# Python
+# =========================
+.venv/
+venv/
+**/__pycache__/
+*.py[cod]
+
+# =========================
+# Environment / secrets
+# =========================
+.env
+.env.*
+!.env.example

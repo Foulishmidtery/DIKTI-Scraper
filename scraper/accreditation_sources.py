@@ -18,11 +18,11 @@ from urllib.parse import urlencode, urljoin, urlparse
 import requests
 
 
-TIMEOUT = 8
+TIMEOUT = 20
 CACHE_TTL = 1800
 LAM_DIRECTORIES = {
     "LAMEMBA": "https://lamemba.or.id/hasil_akreditasi/",
-    "LAM-PTKes": "https://lamptkes.org/Hasil-Pencarian-Database-Hasil-Akreditasi",
+    "LAM-PTKes": "https://akreditasi-idc.lamptkes.org/Tampil-Database-Hasil-Akreditasi",
     "LAMDIK": "https://lamdik.or.id/hasil-akreditasi/",
     "LAM Teknik": "https://sakti.lamteknik.or.id/database-akreditasi",
     "LAM Infokom": "https://laminfokom.or.id/official/data-akreditasi-1.html",
@@ -37,6 +37,8 @@ INTERNATIONAL_DIRECTORIES = {
 }
 _cache: dict[str, tuple[float, str | None]] = {}
 _lock = threading.Lock()
+_read_locks: dict[str, threading.Lock] = {}
+_lamsama_cache: dict[str, tuple[float, list[dict[str, str]]]] = {}
 
 
 def _norm(value: Any) -> str:
@@ -109,15 +111,23 @@ def _read(url: str) -> str | None:
         cached = _cache.get(url)
         if cached and time.time() - cached[0] < (CACHE_TTL if cached[1] else 120):
             return cached[1]
-    try:
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"}, timeout=TIMEOUT)
-        response.raise_for_status()
-        page = response.text
-    except requests.RequestException:
-        page = None
-    with _lock:
-        _cache[url] = (time.time(), page)
-    return page
+        request_lock = _read_locks.setdefault(url, threading.Lock())
+    # Several prodi can belong to one LAM. Serialise the directory request so
+    # every worker reuses one public response rather than hammering the issuer.
+    with request_lock:
+        with _lock:
+            cached = _cache.get(url)
+            if cached and time.time() - cached[0] < (CACHE_TTL if cached[1] else 120):
+                return cached[1]
+        try:
+            response = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"}, timeout=TIMEOUT)
+            response.raise_for_status()
+            page = response.text
+        except requests.RequestException:
+            page = None
+        with _lock:
+            _cache[url] = (time.time(), page)
+        return page
 
 
 def _selected_lams(prodi: dict[str, Any]) -> list[str]:
@@ -217,6 +227,48 @@ def _identity_matches(decision: dict[str, str], prodi: dict[str, Any]) -> bool:
     return True
 
 
+def _fetch_lamsama(prodi: dict[str, Any]) -> list[dict[str, str]]:
+    """Query LAMSAMA's public DataTables endpoint by PT code when available."""
+    pt_name = str(prodi.get("pt", "")).strip()
+    kode_pt = str(prodi.get("kode_pt", "")).strip()
+    search_term = kode_pt or pt_name
+    if not search_term:
+        return []
+    cache_key = f"{_norm(kode_pt)}|{_norm(pt_name)}"
+    with _lock:
+        cached = _lamsama_cache.get(cache_key)
+        if cached and time.time() - cached[0] < CACHE_TTL:
+            return cached[1]
+        request_lock = _read_locks.setdefault(f"lamsama:{cache_key}", threading.Lock())
+    with request_lock:
+        with _lock:
+            cached = _lamsama_cache.get(cache_key)
+            if cached and time.time() - cached[0] < CACHE_TTL:
+                return cached[1]
+        try:
+            response = requests.post(
+                "https://lamsama.or.id/wp-admin/admin-ajax.php",
+                data={"action": "fetch_prodi_data", "draw": "1", "start": "0", "length": "100",
+                      "search[value]": search_term, "search[regex]": "false"},
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=TIMEOUT,
+            )
+            response.raise_for_status()
+            rows = response.json().get("data", [])
+        except (requests.RequestException, ValueError, AttributeError):
+            rows = []
+        result = [{
+            "pt": str(row.get("nama_pt", "")), "prodi": str(row.get("nama_ps", "")),
+            "jenjang": str(row.get("jenjang", "")), "kode_pt": str(row.get("kode_pt", "")),
+            "kode_prodi": str(row.get("kode_ps", "")), "sk": str(row.get("no_sk", "")),
+            "peringkat": str(row.get("peringkat", "")), "tanggal_sk": _date(row.get("tgl_sk", "")),
+            "berlaku_sampai": _date(row.get("tgl_kadaluarsa", "")),
+            "status": "", "url": LAM_DIRECTORIES["LAMSAMA"],
+        } for row in rows if isinstance(row, dict)]
+        with _lock:
+            _lamsama_cache[cache_key] = (time.time(), result)
+        return result
+
+
 def enrich_national(prodi: dict[str, Any]) -> dict[str, Any]:
     """Look up only LAMs relevant to the program; never infer a decision from scope."""
     selected = _selected_lams(prodi)
@@ -226,6 +278,11 @@ def enrich_national(prodi: dict[str, Any]) -> dict[str, Any]:
         url = LAM_DIRECTORIES[source]
         if source == "LAM Teknik":
             url = f"{url}?{urlencode({'institusi[]': str(prodi.get('pt', '')), 'prodi[]': str(prodi.get('nama', ''))})}"
+        if source == "LAMSAMA":
+            decisions = _fetch_lamsama(prodi)
+            checked.append({"lembaga": source, "status": "direktori tersedia" if decisions else "keputusan tidak ditemukan", "url": url})
+            matches.extend((source, row) for row in decisions if _identity_matches(row, prodi))
+            continue
         page = _read(url)
         if page is None:
             checked.append({"lembaga": source, "status": "sumber tidak tersedia", "url": url})

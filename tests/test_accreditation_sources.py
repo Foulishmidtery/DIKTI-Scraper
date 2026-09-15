@@ -91,6 +91,36 @@ class AccreditationSourceTests(unittest.TestCase):
         self.assertIn("institusi%5B%5D=Universitas+Indonesia", read.call_args.args[0])
         self.assertEqual(found["nomor_sk_akreditasi"], "0299/SK/LAM Teknik/AS/VIII/2026")
 
+    def test_lamptkes_public_directory_matches_city_suffix(self):
+        prodi = {"pt": "Universitas Indonesia", "nama": "Keperawatan Jiwa", "jenjang": "Spesialis"}
+        page = """<table><tr><th>Jenjang</th><th>Perguruan Tinggi</th><th>Program Studi</th>
+        <th>Peringkat Akreditasi</th><th>Nomor SK</th><th>Tahun SK</th>
+        <th>Tanggal Kadaluwarsa</th><th>Status Kadaluwarsa</th></tr>
+        <tr><td>SPESIALIS</td><td>UNIVERSITAS INDONESIA, JAKARTA</td>
+        <td>KEPERAWATAN JIWA</td><td>Unggul</td>
+        <td>1020/LAM-PTKes/Akr/Spe/XII/2022</td><td>2022</td>
+        <td>15 Desember 2027</td><td>MASIH BERLAKU</td></tr></table>"""
+        with patch.object(sources, "_read", return_value=page):
+            found = sources.enrich_national(prodi)
+        self.assertEqual(found["lembaga_akreditasi_nasional"], "LAM-PTKes")
+        self.assertEqual(found["tanggal_akhir_akreditasi"], "2027-12-15")
+
+    def test_lamsama_uses_public_search_endpoint(self):
+        prodi = {"pt": "Universitas Contoh", "nama": "Matematika", "jenjang": "S1", "kode_pt": "001", "kode_prodi": "44101"}
+        payload = {"data": [{"kode_pt": "001", "nama_pt": "Universitas Contoh", "kode_ps": "44101",
+                               "nama_ps": "Matematika", "jenjang": "S1", "no_sk": "17/SK/LAMSAMA/2026",
+                               "peringkat": "Unggul", "tgl_sk": "2026-01-15", "tgl_kadaluarsa": "2031-01-15"}]}
+        class Response:
+            def raise_for_status(self): pass
+            def json(self): return payload
+        original_requests = sources.requests
+        sources.requests = types.SimpleNamespace(RequestException=Exception, post=lambda *args, **kwargs: Response())
+        try:
+            found = sources.enrich_national(prodi)
+        finally:
+            sources.requests = original_requests
+        self.assertEqual(found["nomor_sk_akreditasi"], "17/SK/LAMSAMA/2026")
+
 
 if __name__ == "__main__":
     unittest.main()

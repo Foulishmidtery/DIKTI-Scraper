@@ -169,6 +169,7 @@ def export_to_excel(profiles, prodi_list, semester, output_dir, callback):
                      "Berlaku Sampai Akreditasi", "Tanggal Berdiri",
                      "Nomor SK Penyelenggaraan", "Tanggal SK Penyelenggaraan",
                      "Provinsi", "PTN/PTS", "DIKTI/DIKTIS", "Semester Laporan Terakhir",
+                     "Lembaga Akreditasi Nasional", "Peringkat Akreditasi Nasional",
                      "Nomor SK Akreditasi", "Tanggal SK Akreditasi",
                      "Status Berlaku SK Akreditasi", "PTKIN/NON PTKIN", "Pembina"]
     prodi_rows = []
@@ -181,14 +182,17 @@ def export_to_excel(profiles, prodi_list, semester, output_dir, callback):
             p.get("tanggal_akhir_akreditasi"), p.get("tanggal_berdiri"),
             p.get("nomor_sk_penyelenggaraan"), p.get("tanggal_sk_penyelenggaraan"),
             p.get("provinsi"), p.get("ptn_pts"), p.get("dikti_diktis"),
-            p.get("semester_lapor") or "Belum Lapor", p.get("nomor_sk_akreditasi"),
+            p.get("semester_lapor") or "Belum Lapor",
+            p.get("lembaga_akreditasi_nasional") or p.get("sumber_akreditasi"),
+            p.get("peringkat_akreditasi_nasional") or p.get("peringkat_akreditasi_banpt"),
+            p.get("nomor_sk_akreditasi"),
             p.get("tanggal_sk_akreditasi"), p.get("status_berlaku_sk_akreditasi"),
             p.get("ptkin_non"), p.get("pembina"),
         ])
     prodi_ws = _sheet(workbook, "Prodi", prodi_headers, prodi_rows,
                       [8, 14, 27, 11, 42, 15, 15, 22, 22, 20, 32, 22,
-                       22, 13, 17, 22, 32, 22, 25, 20, 28],
-                      date_columns=(8, 9, 11, 17), text_columns=(1,))
+                       22, 13, 17, 22, 24, 24, 32, 22, 25, 20, 28],
+                      date_columns=(8, 9, 11, 19), text_columns=(1,))
     _highlight(prodi_ws, "H", len(prodi_rows) + 5, 'H6="Aktif"', "DCF6E8", "08684C")
     _highlight(prodi_ws, "I", len(prodi_rows) + 5, 'I6<>""', "E7F0FF", "205AAB")
     _highlight(prodi_ws, "J", len(prodi_rows) + 5, 'J6=""', "FFF5E8", "A97013")

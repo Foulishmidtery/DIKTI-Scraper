@@ -1,0 +1,40 @@
+name: Temporary BAN-PT directory probe
+
+on:
+  push:
+    branches:
+      - fix/lamemba-lamspak-source-availability
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check requests
+      - name: Inspect BAN-PT directory source
+        run: |
+          python - <<'PY'
+          import html,re,requests
+          url='https://www.banpt.or.id/direktori/prodi/pencarian_prodi.php'
+          text=requests.get(url,timeout=40,headers={'User-Agent':'Mozilla/5.0'}).text
+          print('STATUS_BYTES',len(text))
+          for m in re.finditer(r'<form\\b([^>]*)>',text,re.I|re.S):
+              print('FORM',html.unescape(m.group(1))[:2000])
+          scripts=re.findall(r'<script\\b[^>]*>(.*?)</script>',text,re.I|re.S)
+          for i,block in enumerate(scripts):
+              low=block.lower()
+              if any(k in low for k in ('datatable','serverside','ajax','pencarian_prodi','.php','columns')):
+                  print('\nSCRIPT',i,'LEN',len(block))
+                  print(html.unescape(block)[:20000])
+          for key in ('serverSide','ajax','processing','No. SK','pencarian_prodi'):
+              print('\nKEY',key)
+              start=0
+              for _ in range(5):
+                  pos=text.lower().find(key.lower(),start)
+                  if pos<0: break
+                  print(html.unescape(text[max(0,pos-1200):pos+3000]).replace('\n',' ')[:4200])
+                  start=pos+len(key)
+          PY

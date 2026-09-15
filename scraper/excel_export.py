@@ -183,7 +183,7 @@ def export_to_excel(profiles, prodi_list, semester, output_dir, callback):
             p.get("nomor_sk_penyelenggaraan"), p.get("tanggal_sk_penyelenggaraan"),
             p.get("provinsi"), p.get("ptn_pts"), p.get("dikti_diktis"),
             p.get("semester_lapor") or "Belum Lapor",
-            p.get("lembaga_akreditasi_nasional") or p.get("sumber_akreditasi"),
+            p.get("lembaga_akreditasi_nasional"),
             p.get("peringkat_akreditasi_nasional") or p.get("peringkat_akreditasi_banpt"),
             p.get("nomor_sk_akreditasi"),
             p.get("tanggal_sk_akreditasi"), p.get("status_berlaku_sk_akreditasi"),

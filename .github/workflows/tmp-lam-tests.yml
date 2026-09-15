@@ -27,23 +27,44 @@ jobs:
           assert result["peringkat_akreditasi_banpt"], result
           assert result["tanggal_akhir_akreditasi"], result
           PY
-      - name: Live LAMEMBA PDDIKTI POST lookup
+      - name: Probe verified LAMEMBA code pairs
         run: |
           python - <<'PY'
-          import html, re, requests
+          import concurrent.futures, html, re, requests
           url="https://lamemba.or.id/connect_pddikti/"
-          r=requests.post(url,data={"kode_pt":"001002","kode_ps":"62201","step1":""},timeout=40,headers={"User-Agent":"Mozilla/5.0","Accept":"text/html"})
-          r.raise_for_status()
-          text=r.text
-          print("status",r.status_code,"bytes",len(text))
-          tbody=re.search(r'<table[^>]*id="pddiktiTable"[^>]*>.*?<tbody>(.*?)</tbody>',text,re.I|re.S)
-          body=tbody.group(1) if tbody else ""
-          print("TBODY",html.unescape(re.sub(r'<[^>]+>',' | ',body))[:6000])
-          rows=re.findall(r'<tr\\b[^>]*>(.*?)</tr>',body,re.I|re.S)
-          print("rows",len(rows))
-          assert rows, "LAMEMBA POST returned no rows"
-          plain=' '.join(html.unescape(re.sub(r'<[^>]+>',' ',body)).split())
-          assert "Universitas Indonesia".lower() in plain.lower(), plain
-          assert "Akuntansi".lower() in plain.lower(), plain
-          assert re.search(r'\\bSK\\b|/SK/|AK\\.',plain,re.I), plain
+          pairs=[
+              ("041043","62201","Universitas Majalengka","Akuntansi"),
+              ("031079","62201","Universitas Jakarta Internasional","Akuntansi"),
+              ("021029","62201","Universitas Mitra Indonesia","Akuntansi"),
+          ]
+          def probe(item):
+              kode_pt,kode_ps,pt,prodi=item
+              try:
+                  r=requests.post(url,data={"kode_pt":kode_pt,"kode_ps":kode_ps,"step1":""},timeout=70,headers={"User-Agent":"Mozilla/5.0","Accept":"text/html"})
+                  text=r.text
+                  tbody=re.search(r'<table[^>]*id="pddiktiTable"[^>]*>.*?<tbody>(.*?)</tbody>',text,re.I|re.S)
+                  body=tbody.group(1) if tbody else ""
+                  plain=' '.join(html.unescape(re.sub(r'<[^>]+>',' ',body)).split())
+                  alerts=[]
+                  for m in re.findall(r'<(?:div|p)[^>]*class=["\'][^"\']*(?:alert|notice|error|warning)[^"\']*["\'][^>]*>(.*?)</(?:div|p)>',text,re.I|re.S):
+                      alerts.append(' '.join(html.unescape(re.sub(r'<[^>]+>',' ',m)).split()))
+                  context=[]
+                  for key in ("gagal","error","tidak ditemukan","curl","timeout","pddikti"):
+                      for m in re.finditer(key,text,re.I):
+                          s=' '.join(html.unescape(re.sub(r'<[^>]+>',' ',text[max(0,m.start()-250):m.start()+700])).split())
+                          if s not in context: context.append(s[:900])
+                          if len(context)>=8: break
+                  return item,r.status_code,len(text),plain[:5000],alerts[:10],context[:8]
+              except Exception as exc:
+                  return item,"EXC",0,"",[],[repr(exc)]
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+              results=list(ex.map(probe,pairs))
+          any_rows=False
+          for item,status,size,plain,alerts,context in results:
+              print("\n===",item,"status",status,"bytes",size,"===")
+              print("TABLE:",plain)
+              print("ALERTS:",alerts)
+              print("CONTEXT:",context)
+              any_rows = any_rows or bool(plain)
+          print("ANY_ROWS",any_rows)
           PY

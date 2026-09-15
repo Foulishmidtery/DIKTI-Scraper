@@ -35,3 +35,20 @@ jobs:
           assert result["tanggal_akhir_akreditasi"], result
           assert result["url_sumber_akreditasi"], result
           PY
+      - name: Inspect public directory endpoint hints
+        run: |
+          python - <<'PY'
+          import re, requests
+          for url in (
+              "https://lamemba.or.id/connect_pddikti/",
+              "https://www.banpt.or.id/direktori/prodi/pencarian_prodi.php",
+          ):
+              text = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"}).text
+              print("\n===", url, "status-bytes", len(text), "===")
+              scripts = re.findall(r"<script\\b[^>]*>(.*?)</script>", text, re.I | re.S)
+              joined = "\n".join(scripts)
+              for line in joined.splitlines():
+                  low = line.lower()
+                  if any(key in low for key in ("ajax", "fetch(", "admin-ajax", "kode_pt", "kode_prodi", "datatable", ".php")):
+                      print(line.strip()[:1500])
+          PY

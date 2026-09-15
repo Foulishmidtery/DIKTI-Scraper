@@ -135,13 +135,13 @@ def _read(url: str) -> str | None:
 def _selected_lams(prodi: dict[str, Any]) -> list[str]:
     name = _norm(prodi.get("nama"))
     patterns = {
-        "LAMEMBA": r"\b(ekonomi|manajemen|bisnis|akuntansi|keuangan|perpajakan)\b",
+        "LAMEMBA": r"\b(ekonomi|manajemen|bisnis|akuntansi|keuangan|perpajakan|perbankan|kewirausahaan)\b",
         "LAM-PTKes": r"\b(kesehatan|kedokteran|keperawatan|kebidanan|farmasi|gizi|fisioterapi|radiologi|epidemiologi|biomedis|kedokteran gigi|anestesi)\b",
         "LAMDIK": r"\b(pendidikan|tadris|keguruan|pedagogi)\b",
         "LAM Teknik": r"\b(teknik|rekayasa|teknologi industri|arsitektur|konstruksi)\b",
         "LAM Infokom": r"\b(informatika|komputer|sistem informasi|teknologi informasi|sains data|kecerdasan buatan)\b",
         "LAMSAMA": r"\b(matematika|fisika|kimia|biologi|statistika|sains alam|aktuaria)\b",
-        "LAMSPAK": r"\b(sosial|politik|administrasi|komunikasi|hubungan internasional|kriminologi|kesejahteraan sosial)\b",
+        "LAMSPAK": r"\b(sosial|politik|administrasi|komunikasi|hubungan internasional|hubungan masyarakat|humas|kriminologi|kesejahteraan sosial)\b",
     }
     return [source for source, pattern in patterns.items() if re.search(pattern, name)]
 

@@ -35,20 +35,49 @@ jobs:
           assert result["tanggal_akhir_akreditasi"], result
           assert result["url_sumber_akreditasi"], result
           PY
-      - name: Inspect public directory endpoint hints
+      - name: Inspect LAMEMBA dynamic lookup scripts
         run: |
           python - <<'PY'
-          import re, requests
-          for url in (
-              "https://lamemba.or.id/connect_pddikti/",
-              "https://www.banpt.or.id/direktori/prodi/pencarian_prodi.php",
+          import html, re
+          from urllib.parse import urljoin, urlparse
+          import requests
+
+          base = "https://lamemba.or.id/connect_pddikti/"
+          headers = {"User-Agent": "Mozilla/5.0", "Accept": "text/html,*/*"}
+          text = requests.get(base, timeout=30, headers=headers).text
+          print("LAMEMBA bytes:", len(text))
+
+          keys = ("ajax", "fetch(", "admin-ajax", "kode_pt", "kode_prodi", "datatable", "pddikti", "nomor_sk", "nomor sk")
+          inline = re.findall(r"<script\b[^>]*>(.*?)</script>", text, re.I | re.S)
+          print("inline scripts:", len(inline))
+          for block in inline:
+              for line in html.unescape(block).splitlines():
+                  if any(key in line.lower() for key in keys):
+                      print("INLINE:", line.strip()[:2500])
+
+          srcs = re.findall(r"<script\b[^>]*\bsrc=['\"]([^'\"]+)['\"]", text, re.I)
+          print("external scripts:", len(srcs))
+          seen = set()
+          for src in srcs:
+              target = urljoin(base, html.unescape(src))
+              if target in seen or urlparse(target).hostname != "lamemba.or.id":
+                  continue
+              seen.add(target)
+              try:
+                  body = requests.get(target, timeout=30, headers=headers).text
+              except Exception as exc:
+                  print("SCRIPT ERROR:", target, exc)
+                  continue
+              hits = [line.strip() for line in body.splitlines() if any(key in line.lower() for key in keys)]
+              if hits:
+                  print("\nSCRIPT:", target)
+                  for line in hits[:30]:
+                      print(line[:2500])
+
+          for pattern in (
+              r"<form\b[^>]*action=['\"]([^'\"]*)['\"]",
+              r"(?:url|endpoint|action)\s*[:=]\s*['\"]([^'\"]+(?:ajax|api|pddikti|\.php)[^'\"]*)['\"]",
           ):
-              text = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"}).text
-              print("\n===", url, "status-bytes", len(text), "===")
-              scripts = re.findall(r"<script\\b[^>]*>(.*?)</script>", text, re.I | re.S)
-              joined = "\n".join(scripts)
-              for line in joined.splitlines():
-                  low = line.lower()
-                  if any(key in low for key in ("ajax", "fetch(", "admin-ajax", "kode_pt", "kode_prodi", "datatable", ".php")):
-                      print(line.strip()[:1500])
+              for match in re.findall(pattern, text, re.I):
+                  print("HTML ENDPOINT HINT:", html.unescape(match)[:2500])
           PY

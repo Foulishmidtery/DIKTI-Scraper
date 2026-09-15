@@ -141,7 +141,7 @@ def _selected_lams(prodi: dict[str, Any]) -> list[str]:
         "LAM Teknik": r"\b(teknik|rekayasa|teknologi industri|arsitektur|konstruksi)\b",
         "LAM Infokom": r"\b(informatika|komputer|sistem informasi|teknologi informasi|sains data|kecerdasan buatan)\b",
         "LAMSAMA": r"\b(matematika|fisika|kimia|biologi|statistika|sains alam|aktuaria)\b",
-        "LAMSPAK": r"\b(sosial|politik|administrasi|komunikasi|hubungan internasional|hubungan masyarakat|humas|kriminologi|kesejahteraan sosial)\b",
+        "LAMSPAK": r"\b(sosial|politik|administrasi|komunikasi|hubungan internasional|hubungan masyarakat|humas|public relations|kriminologi|kesejahteraan sosial|pekerjaan sosial|antropologi|jurnalistik|penyiaran|periklanan|penerbitan dan media|perpustakaan|kearsipan|pemerintahan|kebijakan publik|sosiologi|kependudukan|pembangunan wilayah|komunikasi massa|manajemen komunikasi|kajian film|televisi dan film)\b",
     }
     return [source for source, pattern in patterns.items() if re.search(pattern, name)]
 

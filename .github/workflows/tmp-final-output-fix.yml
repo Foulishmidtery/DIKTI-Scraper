@@ -1,0 +1,52 @@
+name: Temporary final accreditation output fix
+
+on:
+  push:
+    branches:
+      - tmp-final-output-fix
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: contains(github.event.head_commit.message, 'apply and verify final accreditation output fixes')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch output semantics and LAMSPAK scope
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          src = Path('scraper/accreditation_sources.py')
+          text = src.read_text(encoding='utf-8')
+          old = '"LAMSPAK": r"\\b(sosial|politik|administrasi|komunikasi|hubungan internasional|hubungan masyarakat|humas|kriminologi|kesejahteraan sosial)\\b",'
+          new = '"LAMSPAK": r"\\b(sosial|politik|administrasi|komunikasi|hubungan internasional|hubungan masyarakat|humas|public relations|kriminologi|kesejahteraan sosial|pekerjaan sosial|antropologi|jurnalistik|penyiaran|periklanan|penerbitan dan media|perpustakaan|kearsipan|pemerintahan|kebijakan publik|sosiologi|kependudukan|pembangunan wilayah|komunikasi massa|manajemen komunikasi|kajian film|televisi dan film)\\b",'
+          if old not in text:
+              raise SystemExit('LAMSPAK scope pattern not found')
+          src.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          excel = Path('scraper/excel_export.py')
+          text = excel.read_text(encoding='utf-8')
+          old = 'p.get("lembaga_akreditasi_nasional") or p.get("sumber_akreditasi"),'
+          new = 'p.get("lembaga_akreditasi_nasional"),'
+          if old not in text:
+              raise SystemExit('Excel issuer fallback not found')
+          excel.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          test = Path('tests/test_lam_scope_and_output.py')
+          test.write_text('''"""Regression tests for LAM scope classification and issuer/source separation."""\n\nimport importlib.util\nimport sys\nimport types\nimport unittest\nfrom pathlib import Path\n\nsys.modules.setdefault("requests", types.SimpleNamespace(RequestException=Exception))\npath = Path(__file__).resolve().parents[1] / "scraper" / "accreditation_sources.py"\nspec = importlib.util.spec_from_file_location("accreditation_scope_output", path)\nsources = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(sources)\n\n\nclass LamScopeAndOutputTests(unittest.TestCase):\n    def test_official_lamspak_scope_variants_are_selected(self):\n        names = ("Jurnalistik", "Perpustakaan", "Kebijakan Publik", "Manajemen Komunikasi", "Pekerjaan Sosial")\n        for name in names:\n            with self.subTest(name=name):\n                self.assertIn("LAMSPAK", sources._selected_lams({"nama": name}))\n\n    def test_accounting_does_not_become_lamspak(self):\n        selected = sources._selected_lams({"nama": "Akuntansi"})\n        self.assertIn("LAMEMBA", selected)\n        self.assertNotIn("LAMSPAK", selected)\n\n    def test_excel_does_not_treat_register_source_as_issuer(self):\n        export_source = (Path(__file__).resolve().parents[1] / "scraper" / "excel_export.py").read_text(encoding="utf-8")\n        self.assertNotIn('p.get("lembaga_akreditasi_nasional") or p.get("sumber_akreditasi")', export_source)\n\n\nif __name__ == "__main__":\n    unittest.main()\n''', encoding='utf-8')
+          PY
+      - name: Run regression tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Commit verified patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scraper/accreditation_sources.py scraper/excel_export.py tests/test_lam_scope_and_output.py
+          git commit -m "fix(scraper): separate accreditation issuer from registry source"
+          git push origin HEAD:tmp-final-output-fix
